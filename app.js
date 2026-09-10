@@ -24,6 +24,52 @@ const ITEMS = [
     claimHours: 1,
   },
   {
+    key: "CORP11-221",
+    kind: "bug",
+    title: "Factory log drawer loses the selected step",
+    happened: "I click a failed step, the run refreshes, and the drawer jumps back to the first event.",
+    expected: "The selected step stays selected across refresh.",
+    steps: ["Open a running work order", "Select a failed step", "Wait for the next log poll"],
+    severity: "medium",
+    status: "progress",
+    outcome: null,
+    submitter: { name: "You", email: "jhelrigle@eci", initials: "JH" },
+    assignee: { name: "Riley Cho", initials: "RC" },
+    url: "/factory/work-orders/8f21",
+    createdAt: "2026-09-09T18:40:00Z",
+    age: "6h",
+    shots: ["factory"],
+    workOrder: { title: "Keep Factory log selection across refresh", status: "running" },
+    comments: [
+      { name: "Riley Cho", initials: "RC", at: "3h ago", text: "Reproduced on the remount. Started a work order." },
+    ],
+    mine: true,
+    claimHours: 3,
+  },
+  {
+    key: "CORP11-214",
+    kind: "enhancement",
+    title: "Remember the last repo when I open Search",
+    why: "I bounce between three repos a day. Search always dumps me on the org default.",
+    want: "Open Search on the last repo I used, with a way to switch.",
+    where: "Search.",
+    severity: null,
+    status: "progress",
+    outcome: null,
+    submitter: { name: "You", email: "jhelrigle@eci", initials: "JH" },
+    assignee: { name: "Jordan Hale", initials: "JH" },
+    url: "/search",
+    createdAt: "2026-09-09T14:05:00Z",
+    age: "12h",
+    shots: ["search"],
+    workOrder: null,
+    comments: [
+      { name: "Jordan Hale", initials: "JH", at: "8h ago", text: "Claimed. I'll pick this up after the path-filter bug." },
+    ],
+    mine: true,
+    claimHours: 4,
+  },
+  {
     key: "CORP11-176",
     kind: "bug",
     title: "Zoekt drops the path filter on the second query",
@@ -145,6 +191,32 @@ const ITEMS = [
     mine: true,
   },
   {
+    key: "CORP11-198",
+    kind: "idea",
+    title: "Dark mode per repository instead of per user",
+    happened: "I want Docs in light and Factory in Synth without flipping the whole app.",
+    expected: "",
+    steps: [],
+    severity: null,
+    status: "done",
+    outcome: "rejected",
+    resolutionNote: "Themes stay per person. A repo-level override would fight the shared chrome, so we are not taking this.",
+    submitter: { name: "You", email: "jhelrigle@eci", initials: "JH" },
+    assignee: { name: "Riley Cho", initials: "RC" },
+    url: "/docs",
+    createdAt: "2026-08-25T11:20:00Z",
+    age: "16d",
+    shots: ["docs"],
+    workOrder: null,
+    comments: [
+      { name: "Riley Cho", initials: "RC", at: "11d ago", text: "Looked at this with the theme work. One theme per user is the line we are holding." },
+    ],
+    mine: true,
+    claimHours: 10,
+    doneHours: 120,
+    resolvedAt: "2026-09-02T16:00:00Z",
+  },
+  {
     key: "CORP11-210",
     kind: "idea",
     title: "Show Jira comments on the Lore feedback item",
@@ -225,9 +297,15 @@ const PAST_MONTHS = [
 const KIND_LABEL = { bug: "Bug", enhancement: "Enhancement", idea: "Idea" };
 const STATUS_LABEL = { todo: "Awaiting triage", progress: "In progress", done: "Done" };
 const STATUS_CHIP = { todo: "st-todo", progress: "st-progress", done: "st-done" };
+const OUTCOME_LABEL = { implemented: "Implemented", rejected: "Won't do" };
+const REPORTER_PHASE = {
+  waiting: { label: "Waiting", chip: "st-todo" },
+  assigned: { label: "Assigned", chip: "st-assigned" },
+  working: { label: "Being worked on", chip: "st-progress" },
+  done: { label: "Done", chip: "st-done" },
+};
 
 const state = {
-  variant: "studio",
   selectedKey: "CORP11-184",
   inbox: "open",
   kindFilter: "all",
@@ -237,10 +315,8 @@ const state = {
   reportPeriod: "all",
   studioTicket: null,
   studioTone: "dark",
-  todayTab: "resolved",
   compose: null,
   resolve: null,
-  boardOpen: false,
   toast: "",
   items: ITEMS.map((item) => ({ ...item })),
 };
@@ -254,14 +330,24 @@ function kindChip(kind) {
 }
 
 function isReporterView() {
-  return state.variant === "studio" && state.studioRole === "you";
+  return state.studioRole === "you";
 }
 
-function statusChip(status, reporter) {
-  const label = reporter
-    ? { todo: "Waiting", progress: "In progress", done: "Done" }[status]
-    : STATUS_LABEL[status];
-  return `<span class="chip ${STATUS_CHIP[status]}">${label}</span>`;
+function statusChip(status) {
+  return `<span class="chip ${STATUS_CHIP[status]}">${STATUS_LABEL[status]}</span>`;
+}
+
+function reporterPhase(item) {
+  if (item.status === "done") return "done";
+  if (item.workOrder) return "working";
+  if (item.assignee) return "assigned";
+  return "waiting";
+}
+
+function reporterStatusChip(item) {
+  if (item.outcome) return outcomeChip(item.outcome);
+  const phase = REPORTER_PHASE[reporterPhase(item)];
+  return `<span class="chip ${phase.chip}">${phase.label}</span>`;
 }
 
 function sevChip(severity) {
@@ -271,7 +357,7 @@ function sevChip(severity) {
 
 function outcomeChip(outcome) {
   if (!outcome) return "";
-  return `<span class="chip out-${outcome}">${outcome}</span>`;
+  return `<span class="chip out-${outcome}">${OUTCOME_LABEL[outcome]}</span>`;
 }
 
 function shotMarkup(kind, compact) {
@@ -286,23 +372,11 @@ function filtered() {
   return state.items.filter((item) => {
     if (state.kindFilter !== "all" && item.kind !== state.kindFilter) return false;
     if (state.inbox === "open" && item.status === "done") return false;
-    if (state.inbox === "mine") {
-      const assignedToMe = item.assignee?.name === "You";
-      const mineAsReporter = item.mine;
-      if (state.variant === "studio" && state.studioRole === "dev") {
-        if (!assignedToMe) return false;
-      } else if (!mineAsReporter) {
-        return false;
-      }
-    }
+    if (state.inbox === "mine" && item.assignee?.name !== "You") return false;
     if (state.inbox === "done" && item.status !== "done") return false;
     if (!q) return true;
     return [item.key, item.title, item.happened, item.want, item.why].filter(Boolean).join(" ").toLowerCase().includes(q);
   });
-}
-
-function selected() {
-  return state.items.find((item) => item.key === state.selectedKey) ?? filtered()[0] ?? state.items[0];
 }
 
 function toast(message) {
@@ -329,11 +403,11 @@ function resolveItem(item, outcome, note) {
   item.resolutionNote = note;
   item.comments = [
     ...item.comments,
-    { name: "You", initials: "JH", at: "just now", text: `Resolved in Lore as ${outcome}. ${note}`.trim() },
+    { name: "You", initials: "JH", at: "just now", text: `Resolved in Lore as ${OUTCOME_LABEL[outcome]}. ${note}`.trim() },
   ];
   item.doneHours = ageHours(item);
   state.resolve = null;
-  toast(`${item.key} marked ${outcome}. Jira goes to Done.`);
+  toast(`${item.key} marked ${OUTCOME_LABEL[outcome]}. Jira goes to Done.`);
 }
 
 function createItem(draft) {
@@ -367,7 +441,7 @@ function createItem(draft) {
   state.inbox = "open";
   state.studioRole = "you";
   state.studioTicket = item.key;
-  toast(state.variant === "studio" ? "Report submitted." : `${item.key} filed on CORP11.`);
+  toast("Report submitted.");
 }
 
 function replyTo(item, text) {
@@ -459,7 +533,7 @@ function rollup(rows) {
   return [
     { label: "Filed", value: String(sum("filed")), hint: "Reports in this window" },
     { label: "Implemented", value: String(sum("implemented")), hint: "Shipped in this window" },
-    { label: "Rejected", value: String(sum("rejected")), hint: "Closed as no" },
+    { label: "Won't do", value: String(sum("rejected")), hint: "Closed, not taking it" },
     { label: "Work orders", value: String(sum("workOrders")), hint: "Started from a report" },
     { label: "Median to claim", value: fmtHours(median(claims)), hint: "Submit to first owner" },
     { label: "Median to done", value: fmtHours(median(dones)), hint: "Submit to resolved" },
@@ -545,142 +619,6 @@ function actions(item, extra = "") {
     </div>`;
 }
 
-function renderCase() {
-  const rows = filtered();
-  const item = selected();
-  return `
-    <div class="case-inbox">
-      <div class="case-toolbar">
-        <input class="case-search" data-bind="query" placeholder="Search CORP11 or text" value="${escapeAttr(state.query)}" />
-        <div class="seg">
-          <button data-inbox="open" class="${state.inbox === "open" ? "is-on" : ""}">Inbox</button>
-          <button data-inbox="mine" class="${state.inbox === "mine" ? "is-on" : ""}">Mine</button>
-          <button data-inbox="done" class="${state.inbox === "done" ? "is-on" : ""}">Done</button>
-        </div>
-        <div class="kind-row">
-          ${["all", "bug", "enhancement", "idea"]
-            .map((kind) => `<button data-kind="${kind}" class="${state.kindFilter === kind ? "is-on" : ""}">${kind === "all" ? "All types" : KIND_LABEL[kind]}</button>`)
-            .join("")}
-        </div>
-      </div>
-      <div class="case-list">
-        ${
-          rows.length === 0
-            ? `<div class="empty">Nothing in this view.</div>`
-            : rows
-                .map(
-                  (row) => `
-            <button class="case-row ${row.key === item.key ? "is-on" : ""}" data-select="${row.key}">
-              <div class="case-row-top"><span class="key">${row.key}</span><time>${row.age}</time></div>
-              <h3>${row.title}</h3>
-              <div class="case-row-meta">${kindChip(row.kind)} ${row.severity ? sevChip(row.severity) : ""} ${statusChip(row.status)}</div>
-            </button>`,
-                )
-                .join("")
-        }
-      </div>
-      <button class="case-compose-btn" data-act="compose">New report <span class="key">N</span></button>
-    </div>
-    <article class="case-file">
-      <div class="case-kicker">${kindChip(item.kind)} ${statusChip(item.status)} ${item.outcome ? outcomeChip(item.outcome) : ""}</div>
-      <h1>${item.title}</h1>
-      <p class="case-byline">${item.submitter.name} · ${item.age} · ${item.url ? item.url : "No page captured"}</p>
-      ${bodySections(item)}
-      ${shots(item)}
-      ${thread(item)}
-      ${workOrder(item)}
-      ${item.resolutionNote ? `<section class="case-section"><h2>Resolution</h2><p>${item.resolutionNote}</p></section>` : ""}
-      ${actions(item)}
-    </article>
-    <aside class="case-meta">
-      <div class="meta-block"><h3>Jira</h3><p class="key">${item.key}</p><p class="muted">Writes stay inside CORP11.</p></div>
-      <div class="meta-block"><h3>Type</h3><p>${KIND_LABEL[item.kind]}</p></div>
-      <div class="meta-block"><h3>Status</h3><p>${STATUS_LABEL[item.status]}</p></div>
-      ${item.severity ? `<div class="meta-block"><h3>Severity</h3><p>${item.severity}</p></div>` : ""}
-      <div class="meta-block"><h3>Assignee</h3><p>${item.assignee ? item.assignee.name : "Awaiting triage"}</p></div>
-      <div class="meta-block"><h3>Reporter</h3><p>${item.submitter.name}</p><p class="muted">${item.submitter.email}</p></div>
-      <div class="meta-block"><h3>Page</h3>${item.url ? `<a href="#">${item.url}</a>` : `<p class="muted">Not captured</p>`}</div>
-    </aside>
-  `;
-}
-
-function renderBoard() {
-  const item = selected();
-  const cols = [
-    { id: "todo", label: "Awaiting triage" },
-    { id: "progress", label: "In progress" },
-    { id: "done", label: "Done" },
-  ];
-  const q = state.query.trim().toLowerCase();
-  const inCol = (status) =>
-    state.items.filter((row) => {
-      if (row.status !== status) return false;
-      if (state.kindFilter !== "all" && row.kind !== state.kindFilter) return false;
-      if (!q) return true;
-      return `${row.key} ${row.title}`.toLowerCase().includes(q);
-    });
-
-  return `
-    <div class="board-top">
-      <h1>CORP11 board</h1>
-      <div class="board-top-right">
-        <input class="board-search" data-bind="query" placeholder="Filter" value="${escapeAttr(state.query)}" />
-        <div class="kind-row">
-          ${["all", "bug", "enhancement"]
-            .map((kind) => `<button data-kind="${kind}" class="${state.kindFilter === kind ? "is-on" : ""}">${kind === "all" ? "All" : KIND_LABEL[kind]}</button>`)
-            .join("")}
-        </div>
-        <button class="btn btn-primary" data-act="compose">New report</button>
-      </div>
-    </div>
-    <div class="board-cols">
-      ${cols
-        .map((col) => {
-          const cards = inCol(col.id);
-          return `
-          <section class="board-col" data-col="${col.id}">
-            <header><strong>${col.label}</strong><span>${cards.length}</span></header>
-            <div class="board-cards">
-              ${cards
-                .map(
-                  (card) => `
-                <button class="board-card ${card.key === item.key && state.resolve === null ? "is-on" : ""}" data-select="${card.key}" draggable="true" data-key="${card.key}">
-                  ${card.shots[0] ? shotMarkup(card.shots[0], true) : ""}
-                  <div class="board-card-body">
-                    <span class="key">${card.key}</span>
-                    <h3>${card.title}</h3>
-                    <div class="board-card-foot">
-                      <div>${kindChip(card.kind)} ${card.severity ? sevChip(card.severity) : ""} ${card.outcome ? outcomeChip(card.outcome) : ""}</div>
-                      ${card.assignee ? `<div class="face">${card.assignee.initials}</div>` : `<div class="face">?</div>`}
-                    </div>
-                  </div>
-                </button>`,
-                )
-                .join("")}
-            </div>
-          </section>`;
-        })
-        .join("")}
-    </div>
-    ${
-      state.boardOpen
-        ? `
-      <div class="drawer-back" data-act="close-drawer"></div>
-      <aside class="drawer">
-        <div class="case-kicker">${kindChip(item.kind)} ${statusChip(item.status)} <span class="key">${item.key}</span></div>
-        <h1>${item.title}</h1>
-        <p class="case-byline">${item.submitter.name} · ${item.age}</p>
-        ${bodySections(item)}
-        ${shots(item)}
-        ${thread(item)}
-        ${workOrder(item)}
-        ${actions(item)}
-      </aside>`
-        : ""
-    }
-  `;
-}
-
 function studioToneToggle() {
   return `
     <div class="studio-tone" role="group" aria-label="Studio theme">
@@ -692,7 +630,7 @@ function studioToneToggle() {
 function studioRoleToggle() {
   return `
     <div class="studio-tone" role="group" aria-label="Studio role">
-      <button type="button" data-role="you" class="${state.studioRole === "you" ? "is-on" : ""}">You</button>
+      <button type="button" data-role="you" class="${state.studioRole === "you" ? "is-on" : ""}">User</button>
       <button type="button" data-role="dev" class="${state.studioRole === "dev" ? "is-on" : ""}">Developer</button>
     </div>`;
 }
@@ -756,7 +694,7 @@ function renderStudioYou() {
               <h3>${row.title}</h3>
               <div class="sub">${KIND_LABEL[row.kind]} · ${reporterAge(row)}</div>
             </div>
-            ${row.outcome ? outcomeChip(row.outcome) : statusChip(row.status, true)}
+            ${reporterStatusChip(row)}
           </button>`,
                 )
                 .join("")
@@ -892,7 +830,7 @@ function renderStudioReport() {
               <th>Month</th>
               <th>Filed</th>
               <th>Implemented</th>
-              <th>Rejected</th>
+              <th>Won't do</th>
               <th>Work orders</th>
               <th>Median claim</th>
               <th>Median done</th>
@@ -924,13 +862,13 @@ function renderStudio() {
 }
 
 function renderStudioTicket() {
-  if (state.variant !== "studio" || state.studioRole !== "you" || !state.studioTicket) return "";
+  if (state.studioRole !== "you" || !state.studioTicket) return "";
   const item = state.items.find((row) => row.key === state.studioTicket);
   if (!item) return "";
   return `
     <div class="modal-back" data-act="close-ticket">
       <div class="modal ticket" data-stop>
-        <div class="case-kicker">${kindChip(item.kind)} ${statusChip(item.status, true)} ${item.outcome ? outcomeChip(item.outcome) : ""}</div>
+        <div class="case-kicker">${kindChip(item.kind)} ${reporterStatusChip(item)}</div>
         <h2>${item.title}</h2>
         <p class="hint">You ${item.age === "just now" ? "just filed this" : `filed this ${item.age} ago`}.</p>
         ${bodySections(item)}
@@ -944,80 +882,6 @@ function renderStudioTicket() {
         </div>
       </div>
     </div>`;
-}
-
-function todayMessage(item) {
-  if (item.kind === "bug") return item.happened;
-  if (item.kind === "enhancement") return item.want || item.why;
-  return item.happened || item.want;
-}
-
-function renderToday() {
-  const resolved = state.items.filter((item) => item.status === "done");
-  const unresolved = state.items.filter((item) => item.status !== "done");
-  const category = state.kindFilter === "all" ? "" : state.kindFilter === "enhancement" ? "feature" : state.kindFilter;
-
-  const rows = (state.todayTab === "resolved" ? resolved : unresolved).filter((item) => {
-    if (!category) return true;
-    if (category === "feature") return item.kind === "enhancement";
-    return item.kind === category;
-  });
-
-  return `
-    <div class="today-head">
-      <h1>Feedback</h1>
-      <button class="btn" data-act="compose-today">Submit Feedback</button>
-    </div>
-    <div class="today-filters">
-      <select class="today-select" data-bind="kindFilter">
-        <option value="all" ${state.kindFilter === "all" ? "selected" : ""}>All Categories</option>
-        <option value="bug" ${state.kindFilter === "bug" ? "selected" : ""}>bug</option>
-        <option value="enhancement" ${state.kindFilter === "enhancement" ? "selected" : ""}>feature</option>
-        <option value="idea" ${state.kindFilter === "idea" ? "selected" : ""}>idea</option>
-      </select>
-    </div>
-    <div class="today-tabs">
-      <button data-today="resolved" class="${state.todayTab === "resolved" ? "is-on" : ""}">Resolved <span class="today-badge green">${resolved.length}</span></button>
-      <button data-today="unresolved" class="${state.todayTab === "unresolved" ? "is-on" : ""}">Unresolved <span class="today-badge">${unresolved.length}</span></button>
-    </div>
-    ${
-      state.todayTab === "resolved"
-        ? `
-      <table class="today-table">
-        <thead><tr><th>Status</th><th>Category</th><th>Message</th><th>Submitted By</th><th>MTTD</th></tr></thead>
-        <tbody>
-          ${rows
-            .map(
-              (item) => `
-            <tr>
-              <td>${item.outcome ? outcomeChip(item.outcome) : statusChip("done")}</td>
-              <td>${kindChip(item.kind === "enhancement" ? "enhancement" : item.kind)}</td>
-              <td>${todayMessage(item)}</td>
-              <td>${item.submitter.name}<div class="sub" style="color:#94a3b8;font-size:11px">${item.submitter.email}</div></td>
-              <td>${item.age}</td>
-            </tr>`,
-            )
-            .join("")}
-        </tbody>
-      </table>`
-        : rows
-            .map(
-              (item) => `
-          <article class="today-card">
-            ${kindChip(item.kind)}
-            <h3>${todayMessage(item)}</h3>
-            <p style="font-size:12px;color:#94a3b8">${item.submitter.name} · ${item.submitter.email}</p>
-            <p style="font-size:12px;color:#94a3b8;margin-top:8px">${item.assignee ? `${item.status}: ${item.assignee.name}` : "Awaiting triage"}</p>
-            <div class="case-actions">
-              ${!item.assignee ? `<button class="btn" data-act="claim" data-key="${item.key}">Claim</button>` : ""}
-              <button class="btn" data-act="open-resolve" data-key="${item.key}">Resolve</button>
-              <button class="btn" data-act="wo" data-key="${item.key}">Generate Work Order</button>
-            </div>
-          </article>`,
-            )
-            .join("")
-    }
-  `;
 }
 
 function renderCompose() {
@@ -1038,44 +902,30 @@ function renderCompose() {
   }
 
   const isBug = draft.kind === "bug";
-  const today = state.variant === "today";
   return `
     <div class="modal-back" data-act="close-compose">
       <div class="modal" data-stop>
-        <h2>${today ? "Send Feedback" : isBug ? "Report a bug" : "Request something"}</h2>
-        <p class="hint">${today ? "What's on your mind?" : "Page context is filled from where you opened this. Clear it if it is wrong."}</p>
+        <h2>${isBug ? "Report a bug" : "Request something"}</h2>
+        <p class="hint">Page context is filled from where you opened this. Clear it if it is wrong.</p>
+        <div class="field"><label>Title</label><input name="title" placeholder="${isBug ? "Short description of the failure" : "The change you want"}" /></div>
         ${
-          today
-            ? `<div class="field"><label>Category</label>
-            <select name="kind">
-              <option value="bug">Bug</option>
-              <option value="enhancement">Feature</option>
-              <option value="idea">Idea</option>
-              <option value="other">Other</option>
-            </select></div>
-            <div class="field"><label>Message</label><textarea name="title" placeholder="What's on your mind?"></textarea></div>
-            <div class="field"><label>URL</label><input name="url" placeholder="https://" /></div>`
-            : `
-            <div class="field"><label>Title</label><input name="title" placeholder="${isBug ? "Short description of the failure" : "The change you want"}" /></div>
-            ${
-              isBug
-                ? `<div class="field"><label>What happened</label><textarea name="happened"></textarea></div>
-                   <div class="field"><label>What you expected</label><textarea name="expected"></textarea></div>
-                   <div class="field"><label>Steps</label><textarea name="steps" placeholder="One step per line"></textarea></div>
-                   <div class="field"><label>Severity</label>
-                     <select name="severity">
-                       <option value="blocker">Blocker</option>
-                       <option value="high" selected>High</option>
-                       <option value="medium">Medium</option>
-                       <option value="low">Low</option>
-                     </select>
-                   </div>`
-                : `<div class="field"><label>What do you want</label><textarea name="want"></textarea></div>
-                   <div class="field"><label>Why it matters</label><textarea name="why"></textarea></div>
-                   <div class="field"><label>Where in Lore</label><input name="where" placeholder="Docs, Factory, Search…" /></div>`
-            }
-            <div class="field"><label>Page</label><input name="url" value="/factory/work-orders/demo" /></div>`
+          isBug
+            ? `<div class="field"><label>What happened</label><textarea name="happened"></textarea></div>
+               <div class="field"><label>What you expected</label><textarea name="expected"></textarea></div>
+               <div class="field"><label>Steps</label><textarea name="steps" placeholder="One step per line"></textarea></div>
+               <div class="field"><label>Severity</label>
+                 <select name="severity">
+                   <option value="blocker">Blocker</option>
+                   <option value="high" selected>High</option>
+                   <option value="medium">Medium</option>
+                   <option value="low">Low</option>
+                 </select>
+               </div>`
+            : `<div class="field"><label>What do you want</label><textarea name="want"></textarea></div>
+               <div class="field"><label>Why it matters</label><textarea name="why"></textarea></div>
+               <div class="field"><label>Where in Lore</label><input name="where" placeholder="Docs, Factory, Search…" /></div>`
         }
+        <div class="field"><label>Page</label><input name="url" value="/factory/work-orders/demo" /></div>
         <div class="modal-actions">
           <button class="btn btn-ghost" data-act="close-compose">Close</button>
           <button class="btn btn-primary" data-act="submit-compose">Submit</button>
@@ -1096,7 +946,7 @@ function renderResolve() {
           <label>Outcome</label>
           <select name="outcome">
             <option value="implemented">Implemented</option>
-            <option value="rejected">Rejected</option>
+            <option value="rejected">Won't do</option>
           </select>
         </div>
         <div class="field"><label>Note to the reporter</label><textarea name="note" placeholder="What changed, or why not."></textarea></div>
@@ -1114,27 +964,14 @@ function escapeAttr(value) {
 
 function render() {
   const app = $("#app");
-  app.dataset.variant = state.variant;
-  if (state.variant === "studio") {
-    app.dataset.tone = state.studioTone;
-    app.dataset.role = state.studioRole;
-    app.dataset.page = state.studioRole === "dev" ? state.studioDevPage : "you";
-  } else {
-    delete app.dataset.tone;
-    delete app.dataset.role;
-    delete app.dataset.page;
-  }
-  if (state.variant === "case") app.innerHTML = renderCase();
-  else if (state.variant === "board") app.innerHTML = renderBoard();
-  else if (state.variant === "studio") app.innerHTML = renderStudio();
-  else app.innerHTML = renderToday();
+  app.dataset.variant = "studio";
+  app.dataset.tone = state.studioTone;
+  app.dataset.role = state.studioRole;
+  app.dataset.page = state.studioRole === "dev" ? state.studioDevPage : "you";
+  app.innerHTML = renderStudio();
 
   const modal = $("#modal-root");
   modal.innerHTML = `${renderCompose()}${renderResolve()}${renderStudioTicket()}${state.toast ? `<div class="toast">${state.toast}</div>` : ""}`;
-
-  document.querySelectorAll(".switcher-tabs button").forEach((button) => {
-    button.classList.toggle("is-on", button.dataset.variant === state.variant);
-  });
 }
 
 function readForm(modal) {
@@ -1149,21 +986,9 @@ document.addEventListener("click", (event) => {
   if (event.target.closest("[data-stop]") && event.target.closest(".modal") && !event.target.closest("[data-act]")) {
     return;
   }
-  const t = event.target.closest("[data-variant], [data-inbox], [data-kind], [data-select], [data-act], [data-today], [data-col], [data-tone], [data-role], [data-ticket], [data-dev], [data-period]");
+  const t = event.target.closest("[data-inbox], [data-kind], [data-select], [data-act], [data-tone], [data-role], [data-ticket], [data-dev], [data-period]");
   if (!t) {
     if (event.target.matches(".modal-back")) return;
-    return;
-  }
-
-  if (t.dataset.variant) {
-    state.variant = t.dataset.variant;
-    state.compose = null;
-    state.resolve = null;
-    state.boardOpen = false;
-    if (state.variant === "today") state.inbox = "done";
-    if (state.variant === "case" || state.variant === "studio") state.inbox = "open";
-    if (state.variant !== "studio") state.studioTicket = null;
-    render();
     return;
   }
   if (t.dataset.role) {
@@ -1206,11 +1031,6 @@ document.addEventListener("click", (event) => {
     render();
     return;
   }
-  if (t.dataset.today) {
-    state.todayTab = t.dataset.today;
-    render();
-    return;
-  }
   if (t.dataset.tone) {
     state.studioTone = t.dataset.tone;
     render();
@@ -1218,7 +1038,6 @@ document.addEventListener("click", (event) => {
   }
   if (t.dataset.select) {
     state.selectedKey = t.dataset.select;
-    if (state.variant === "board") state.boardOpen = true;
     render();
     return;
   }
@@ -1230,7 +1049,6 @@ document.addEventListener("click", (event) => {
     state.compose = { step: "pick" };
     state.studioTicket = null;
   }
-  if (act === "compose-today") state.compose = { step: "form", kind: "other", today: true };
   if (act === "compose-bug") {
     state.compose = { step: "form", kind: "bug" };
     state.studioTicket = null;
@@ -1247,7 +1065,6 @@ document.addEventListener("click", (event) => {
     replyTo(item, formRoot ? readForm(formRoot).reply : "");
     return;
   }
-  if (act === "close-drawer") state.boardOpen = false;
   if (act === "claim" && item) claim(item);
   if (act === "open-resolve") state.resolve = key;
   if (act === "wo" && item) {
@@ -1294,37 +1111,29 @@ document.addEventListener("input", (event) => {
       next.setSelectionRange(pos, pos);
     }
   }
-  if (event.target.dataset.bind === "kindFilter") {
-    state.kindFilter = event.target.value;
-    render();
-  }
 });
 
 document.addEventListener("keydown", (event) => {
   if (event.target.matches("input, textarea, select")) return;
-  if (event.key === "1") state.variant = "case";
-  if (event.key === "2") state.variant = "board";
-  if (event.key === "3") state.variant = "studio";
-  if (event.key === "4") state.variant = "today";
   if (event.key === "n" || event.key === "N") {
-    state.compose = state.variant === "today" ? { step: "form", kind: "other" } : { step: "pick" };
+    state.compose = { step: "pick" };
     state.studioTicket = null;
   }
-  if (state.variant === "studio" && (event.key === "y" || event.key === "Y")) {
+  if (event.key === "y" || event.key === "Y") {
     state.studioRole = "you";
     state.studioTicket = null;
     state.resolve = null;
   }
-  if (state.variant === "studio" && (event.key === "d" || event.key === "D")) {
+  if (event.key === "d" || event.key === "D") {
     state.studioRole = "dev";
     state.studioTicket = null;
     state.compose = null;
     state.inbox = "open";
   }
-  if (state.variant === "studio" && state.studioRole === "dev" && (event.key === "r" || event.key === "R")) {
+  if (state.studioRole === "dev" && (event.key === "r" || event.key === "R")) {
     state.studioDevPage = "report";
   }
-  if (state.variant === "studio" && state.studioRole === "dev" && (event.key === "q" || event.key === "Q")) {
+  if (state.studioRole === "dev" && (event.key === "q" || event.key === "Q")) {
     state.studioDevPage = "queue";
   }
   if (event.key === "Escape") {
@@ -1332,41 +1141,9 @@ document.addEventListener("keydown", (event) => {
     state.resolve = null;
     state.studioTicket = null;
   }
-  if (state.variant === "case" && (event.key === "j" || event.key === "k")) {
-    const rows = filtered();
-    const i = rows.findIndex((row) => row.key === state.selectedKey);
-    const next = event.key === "j" ? rows[i + 1] : rows[i - 1];
-    if (next) state.selectedKey = next.key;
-  }
   render();
 });
 
-document.addEventListener("dragstart", (event) => {
-  const card = event.target.closest("[draggable]");
-  if (!card) return;
-  event.dataTransfer.setData("text/plain", card.dataset.key);
-});
-
-document.addEventListener("dragover", (event) => {
-  if (event.target.closest("[data-col]")) event.preventDefault();
-});
-
-document.addEventListener("drop", (event) => {
-  const col = event.target.closest("[data-col]");
-  const key = event.dataTransfer.getData("text/plain");
-  const item = state.items.find((row) => row.key === key);
-  if (!col || !item) return;
-  event.preventDefault();
-  item.status = col.dataset.col;
-  if (item.status === "progress" && !item.assignee) item.assignee = { name: "You", initials: "JH" };
-  if (item.status === "done" && !item.outcome) item.outcome = "implemented";
-  if (item.status === "todo") {
-    item.assignee = null;
-    item.outcome = null;
-  }
-  toast(`${item.key} → ${STATUS_LABEL[item.status]} on CORP11.`);
-  render();
-});
 
 const params = new URLSearchParams(location.search);
 if (params.get("role") === "dev" || params.get("page") === "report") state.studioRole = "dev";
