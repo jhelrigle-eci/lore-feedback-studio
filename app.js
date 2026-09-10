@@ -286,14 +286,6 @@ const ITEMS = [
   },
 ];
 
-const PAST_MONTHS = [
-  { id: "2026-04", label: "Apr", filed: 7, implemented: 5, rejected: 1, workOrders: 3, claimHours: 22, doneHours: 216 },
-  { id: "2026-05", label: "May", filed: 9, implemented: 6, rejected: 2, workOrders: 4, claimHours: 16, doneHours: 192 },
-  { id: "2026-06", label: "Jun", filed: 11, implemented: 8, rejected: 1, workOrders: 5, claimHours: 14, doneHours: 168 },
-  { id: "2026-07", label: "Jul", filed: 8, implemented: 5, rejected: 2, workOrders: 3, claimHours: 18, doneHours: 240 },
-  { id: "2026-08", label: "Aug", filed: 10, implemented: 7, rejected: 1, workOrders: 4, claimHours: 15, doneHours: 200 },
-];
-
 const KIND_LABEL = { bug: "Bug", enhancement: "Enhancement", idea: "Idea" };
 const STATUS_LABEL = { todo: "Awaiting triage", progress: "In progress", done: "Done" };
 const STATUS_CHIP = { todo: "st-todo", progress: "st-progress", done: "st-done" };
@@ -305,19 +297,76 @@ const REPORTER_PHASE = {
   done: { label: "Done", chip: "st-done" },
 };
 
+const PREFILL = "The PR recommendations appear to be getting cut off mid-sentence.";
+
+const DEMO_TICKET = {
+  kind: "bug",
+  severity: "medium",
+  title: "PR recommendations are cut off mid-sentence",
+  happened: "In the PR recommendations pane, the last sentence of each recommendation is truncated. Happens on every assessment opened this week, including lore#184.",
+  expected: "The full recommendation text should be visible, or wrap, instead of clipping mid-sentence.",
+  page: "/repos/eci-nexus/lore/pull/184",
+  product: "Lore",
+  area: "PR assessments",
+  related: ["lore#184"],
+  labels: ["bug", "pr-assessment", "ui"],
+};
+
+const DEMO_BEATS = [
+  { delay: 380, think: "Reading the page you were on…" },
+  { delay: 1600, think: "Looking at how PR recommendations render…" },
+  {
+    delay: 1400,
+    role: "agent",
+    text: "I can see the recommendations pane. Is this on one PR, or every assessment you've opened?",
+  },
+  {
+    delay: 2400,
+    role: "you",
+    text: "Every one I've opened this week. The last sentence just stops.",
+  },
+  { delay: 900, think: "Got it — every assessment, not a single PR." },
+  {
+    delay: 1300,
+    role: "agent",
+    text: "Going to check any existing tickets or feedback on this before I file a new one.",
+  },
+  { delay: 1500, think: "Searching CORP11 for truncated PR recommendations…" },
+  { delay: 1800, think: "Checking leftover Lore feedback for the same clip…" },
+  {
+    delay: 1500,
+    role: "agent",
+    text: "Nothing open that matches. Closest is an old Docs readability item — different surface. I'll file this as a new bug.",
+  },
+  { delay: 1600, think: "Drafting the CORP11 ticket…" },
+  {
+    delay: 1500,
+    role: "agent",
+    text: "Here's what I'll send. Bug, medium, PR assessments — recommendations clip mid-sentence on every assessment this week.",
+    writeup: DEMO_TICKET,
+  },
+];
+
 const state = {
   selectedKey: "CORP11-184",
   inbox: "open",
   kindFilter: "all",
   query: "",
   studioRole: "you",
-  studioDevPage: "queue",
-  reportPeriod: "all",
   studioTicket: null,
   studioTone: "dark",
   compose: null,
   resolve: null,
   toast: "",
+  feedbackOpen: false,
+  feedbackShown: false,
+  feedbackTab: "chat",
+  feedbackDraft: PREFILL,
+  feedbackBusy: false,
+  feedbackThinking: "",
+  feedbackDemo: "idle",
+  feedbackShots: [],
+  feedbackMessages: [],
   items: ITEMS.map((item) => ({ ...item })),
 };
 
@@ -423,6 +472,8 @@ function createItem(draft) {
     want: draft.want || "",
     where: draft.where || "",
     severity: draft.severity || (draft.kind === "bug" ? "medium" : null),
+    related: draft.related || [],
+    labels: draft.labels || [],
     status: "todo",
     outcome: null,
     submitter: { name: "You", email: "jhelrigle@eci", initials: "JH" },
@@ -430,7 +481,7 @@ function createItem(draft) {
     url: draft.url || "/factory/work-orders/demo",
     createdAt: new Date().toISOString(),
     age: "just now",
-    shots: draft.kind === "bug" ? ["factory"] : [],
+    shots: draft.shots?.length ? draft.shots : draft.kind === "bug" ? ["factory"] : [],
     workOrder: null,
     comments: [],
     mine: true,
@@ -440,7 +491,15 @@ function createItem(draft) {
   state.compose = null;
   state.inbox = "open";
   state.studioRole = "you";
-  state.studioTicket = item.key;
+  if (draft.fromChat) {
+    state.studioTicket = null;
+    state.feedbackMessages = [
+      ...state.feedbackMessages,
+      { role: "agent", text: "Sent. It's waiting on someone. You can keep talking here, or open it from Your reports." },
+    ];
+  } else {
+    state.studioTicket = item.key;
+  }
   toast("Report submitted.");
 }
 
@@ -458,99 +517,6 @@ function ageHours(item) {
   if (String(item.age).endsWith("h")) return n;
   if (String(item.age).endsWith("d")) return n * 24;
   return 0;
-}
-
-function median(values) {
-  if (!values.length) return null;
-  const sorted = [...values].sort((a, b) => a - b);
-  const mid = Math.floor(sorted.length / 2);
-  return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
-}
-
-function fmtHours(hours) {
-  if (hours == null) return "—";
-  if (hours < 1) return "<1h";
-  if (hours < 24) return `${Math.round(hours)}h`;
-  const days = hours / 24;
-  return days < 10 && days % 1 ? `${days.toFixed(1)}d` : `${Math.round(days)}d`;
-}
-
-function studioMetrics() {
-  const items = state.items;
-  const open = items.filter((item) => item.status !== "done");
-  const claims = items.map((item) => item.claimHours).filter((n) => n != null);
-  const dones = items.map((item) => item.doneHours).filter((n) => n != null);
-  return [
-    { label: "Unclaimed", value: String(open.filter((item) => !item.assignee).length), hint: "Waiting on an owner" },
-    { label: "Older than 7 days", value: String(open.filter((item) => ageHours(item) >= 168).length), hint: "Still open" },
-    { label: "Median to claim", value: fmtHours(median(claims)), hint: "Submit to first owner" },
-    { label: "Median to done", value: fmtHours(median(dones)), hint: "Submit to resolved" },
-    { label: "Implemented", value: String(items.filter((item) => item.outcome === "implemented").length), hint: "Shipped this month" },
-    { label: "Work orders", value: String(items.filter((item) => item.workOrder).length), hint: "Started from a report" },
-  ];
-}
-
-function septemberRow() {
-  const items = state.items;
-  const sep = items.filter((item) => item.createdAt.startsWith("2026-09"));
-  const claims = sep.map((item) => item.claimHours).filter((n) => n != null);
-  const dones = items
-    .filter((item) => (item.resolvedAt || "").startsWith("2026-09"))
-    .map((item) => item.doneHours)
-    .filter((n) => n != null);
-  return {
-    id: "2026-09",
-    label: "Sep",
-    filed: sep.length,
-    implemented: items.filter((item) => item.outcome === "implemented" && (item.resolvedAt || "").startsWith("2026-09")).length,
-    rejected: items.filter((item) => item.outcome === "rejected" && (item.resolvedAt || "").startsWith("2026-09")).length,
-    workOrders: sep.filter((item) => item.workOrder).length,
-    claimHours: median(claims),
-    doneHours: median(dones),
-  };
-}
-
-function historyMonths() {
-  return [...PAST_MONTHS, septemberRow()];
-}
-
-function monthsForPeriod(months) {
-  if (state.reportPeriod === "month") return months.filter((row) => row.id === "2026-09");
-  if (state.reportPeriod === "90d") return months.filter((row) => ["2026-07", "2026-08", "2026-09"].includes(row.id));
-  return months;
-}
-
-function periodLabel() {
-  if (state.reportPeriod === "month") return "This month";
-  if (state.reportPeriod === "90d") return "Last 90 days";
-  return "All time";
-}
-
-function rollup(rows) {
-  const sum = (key) => rows.reduce((n, row) => n + (row[key] || 0), 0);
-  const claims = rows.map((row) => row.claimHours).filter((n) => n != null);
-  const dones = rows.map((row) => row.doneHours).filter((n) => n != null);
-  return [
-    { label: "Filed", value: String(sum("filed")), hint: "Reports in this window" },
-    { label: "Implemented", value: String(sum("implemented")), hint: "Shipped in this window" },
-    { label: "Won't do", value: String(sum("rejected")), hint: "Closed, not taking it" },
-    { label: "Work orders", value: String(sum("workOrders")), hint: "Started from a report" },
-    { label: "Median to claim", value: fmtHours(median(claims)), hint: "Submit to first owner" },
-    { label: "Median to done", value: fmtHours(median(dones)), hint: "Submit to resolved" },
-  ];
-}
-
-function metricTiles(metrics) {
-  return metrics
-    .map(
-      (metric) => `
-      <div class="metric">
-        <span>${metric.label}</span>
-        <strong>${metric.value}</strong>
-        <p>${metric.hint}</p>
-      </div>`,
-    )
-    .join("");
 }
 
 function bodySections(item) {
@@ -635,21 +601,11 @@ function studioRoleToggle() {
     </div>`;
 }
 
-function studioPageToggle() {
-  if (state.studioRole !== "dev") return "";
-  return `
-    <div class="studio-tone" role="group" aria-label="Developer page">
-      <button type="button" data-dev="queue" class="${state.studioDevPage === "queue" ? "is-on" : ""}">Queue</button>
-      <button type="button" data-dev="report" class="${state.studioDevPage === "report" ? "is-on" : ""}">Report</button>
-    </div>`;
-}
-
 function studioChrome(kicker) {
   return `
     <div class="studio-head">
       <div class="studio-head-left">
         <p class="studio-kicker">${kicker}</p>
-        ${studioPageToggle()}
       </div>
       <div class="studio-head-right">
         ${studioRoleToggle()}
@@ -662,55 +618,471 @@ function reporterAge(item) {
   return item.age === "just now" ? "just now" : `filed ${item.age} ago`;
 }
 
-function renderStudioYou() {
-  const mine = state.items.filter((item) => item.mine);
+function sketchDock() {
   return `
-    <div class="studio">
-      ${studioChrome("Lore feedback")}
-      <h1>What's broken, or what's missing?</h1>
-      <p class="lede">Tell us what broke or what you want next. Open one of yours to see where it stands and talk to the person working it.</p>
-      <div class="studio-choices">
-        <button class="choice bug" data-act="compose-bug">
-          <div class="mark">!</div>
-          <h2>Report a bug</h2>
-          <p>What happened, what you expected, and a screenshot if you have one.</p>
-        </button>
-        <button class="choice enh" data-act="compose-enh">
-          <div class="mark">+</div>
-          <h2>Request something</h2>
-          <p>The change you want, why it matters, and where in Lore it lives.</p>
-        </button>
+    <div class="sketch-dock" aria-label="Sketch controls">
+      ${studioRoleToggle()}
+      ${studioToneToggle()}
+    </div>`;
+}
+
+function classifyKind(text) {
+  const t = text.toLowerCase();
+  if (/\b(idea|what if|wonder|maybe we)\b/.test(t)) return "idea";
+  if (/\b(want|could we|add|remember|shortcut|please|would be nice|missing|request)\b/.test(t)) return "enhancement";
+  return "bug";
+}
+
+function titleFromText(text) {
+  const line = String(text || "").split(/[.!\n]/)[0].trim();
+  return (line || "Untitled report").slice(0, 80);
+}
+
+function buildWriteup(text, kind, shots) {
+  const title = titleFromText(text);
+  if (kind === "bug") {
+    return {
+      kind,
+      title,
+      happened: text,
+      expected: "It should keep doing the last thing I asked, without jumping away.",
+      page: "/knowledge",
+      shots,
+    };
+  }
+  return {
+    kind,
+    title,
+    want: text,
+    why: "This is in the way every time I come back to this page.",
+    where: "Lore",
+    page: "/knowledge",
+    shots,
+  };
+}
+
+function agentReplyFor(kind) {
+  if (kind === "bug") return "This reads as a bug. I wrote it up from what you said and the page you were on. Check the draft, then send it.";
+  if (kind === "enhancement") return "This is a request, not a break. I drafted it as an enhancement. Check it, then send.";
+  return "I'll treat this as an idea. Here's the write-up. Send it when it looks right.";
+}
+
+let feedbackFrame = 0;
+let feedbackTimer = 0;
+const demoTimers = [];
+
+function cancelFeedbackMotion() {
+  window.cancelAnimationFrame(feedbackFrame);
+  window.clearTimeout(feedbackTimer);
+}
+
+function cancelDemo() {
+  while (demoTimers.length) window.clearTimeout(demoTimers.pop());
+  state.feedbackThinking = "";
+  state.feedbackBusy = false;
+}
+
+function resetChat() {
+  cancelDemo();
+  for (const shot of state.feedbackShots) {
+    if (shot.url) URL.revokeObjectURL(shot.url);
+  }
+  state.feedbackMessages = [];
+  state.feedbackDraft = PREFILL;
+  state.feedbackShots = [];
+  state.feedbackBusy = false;
+  state.feedbackThinking = "";
+  state.feedbackDemo = "idle";
+  state.feedbackTab = "chat";
+}
+
+function isPrefill(text) {
+  return String(text || "").trim() === PREFILL;
+}
+
+function scheduleDemo(delay, fn) {
+  const wait = prefersReducedMotion() ? 40 : delay;
+  const id = window.setTimeout(fn, wait);
+  demoTimers.push(id);
+}
+
+function scrollFeedback() {
+  const body = document.querySelector(".fb-body");
+  if (body) body.scrollTop = body.scrollHeight;
+}
+
+function focusPrefill() {
+  const box = document.querySelector("[data-bind=feedbackDraft]");
+  if (!box) return;
+  box.focus();
+}
+
+function prefersReducedMotion() {
+  return window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
+}
+
+function openFeedback() {
+  cancelFeedbackMotion();
+  state.feedbackTab = "chat";
+  state.studioTicket = null;
+  state.compose = null;
+  state.feedbackOpen = true;
+  if (!state.feedbackMessages.length) state.feedbackDraft = PREFILL;
+  if (prefersReducedMotion()) {
+    state.feedbackShown = true;
+    render();
+    focusPrefill();
+    return;
+  }
+  state.feedbackShown = false;
+  render();
+  feedbackFrame = window.requestAnimationFrame(() => {
+    feedbackFrame = window.requestAnimationFrame(() => {
+      document.querySelector(".fb-drawer")?.classList.add("is-in");
+      document.querySelector(".fb-back")?.classList.add("is-in");
+      state.feedbackShown = true;
+      focusPrefill();
+    });
+  });
+}
+
+function closeFeedback() {
+  cancelFeedbackMotion();
+  cancelDemo();
+  if (!state.feedbackOpen) return;
+  const finish = () => {
+    state.feedbackOpen = false;
+    state.feedbackShown = false;
+    resetChat();
+    render();
+  };
+  if (!state.feedbackShown || prefersReducedMotion()) {
+    finish();
+    return;
+  }
+  state.feedbackShown = false;
+  document.querySelector(".fb-drawer")?.classList.remove("is-in");
+  document.querySelector(".fb-back")?.classList.remove("is-in");
+  feedbackTimer = window.setTimeout(finish, 320);
+}
+
+function playDemoBeats(index) {
+  const beat = DEMO_BEATS[index];
+  if (!beat) {
+    state.feedbackThinking = "";
+    state.feedbackBusy = false;
+    state.feedbackDemo = "done";
+    render();
+    scrollFeedback();
+    document.querySelector("[data-bind=feedbackDraft]")?.focus();
+    return;
+  }
+  scheduleDemo(beat.delay, () => {
+    if (beat.think) {
+      state.feedbackThinking = beat.think;
+    } else {
+      state.feedbackThinking = "";
+      state.feedbackMessages = [...state.feedbackMessages, { role: beat.role, text: beat.text, writeup: beat.writeup }];
+    }
+    render();
+    scrollFeedback();
+    playDemoBeats(index + 1);
+  });
+}
+
+function startDemo(said, previews) {
+  cancelDemo();
+  state.feedbackDemo = "running";
+  state.feedbackBusy = true;
+  state.feedbackThinking = "";
+  state.feedbackMessages = [{ role: "you", text: said, previews }];
+  state.feedbackDraft = "";
+  state.feedbackShots = [];
+  render();
+  scrollFeedback();
+  playDemoBeats(0);
+}
+
+function sendAdHoc(said, previews, shots) {
+  state.feedbackMessages = [...state.feedbackMessages, { role: "you", text: said, previews }];
+  state.feedbackDraft = "";
+  state.feedbackShots = [];
+  state.feedbackBusy = true;
+  state.feedbackThinking = "Looking at what you wrote…";
+  render();
+  scrollFeedback();
+  scheduleDemo(900, () => {
+    const kind = classifyKind(said);
+    state.feedbackMessages = [...state.feedbackMessages, { role: "agent", text: agentReplyFor(kind), writeup: buildWriteup(said, kind, shots) }];
+    state.feedbackThinking = "";
+    state.feedbackBusy = false;
+    render();
+    scrollFeedback();
+    document.querySelector("[data-bind=feedbackDraft]")?.focus();
+  });
+}
+
+function sendFeedbackChat() {
+  if (state.feedbackBusy || state.feedbackDemo === "running") return;
+  const text = state.feedbackDraft.trim();
+  const previews = state.feedbackShots.map((shot) => shot.url);
+  const shots = state.feedbackShots.map((shot) => shot.kind || "factory");
+  if (!text && !previews.length) return;
+  const said = text || "See the screenshot.";
+
+  if (state.feedbackDemo === "idle" && isPrefill(said)) {
+    startDemo(said, previews);
+    return;
+  }
+
+  sendAdHoc(said, previews, shots);
+}
+
+function submitWriteup(writeup) {
+  if (!writeup || state.feedbackBusy) return;
+  createItem({
+    kind: writeup.kind,
+    title: writeup.title,
+    happened: writeup.happened || writeup.want,
+    expected: writeup.expected,
+    want: writeup.want,
+    why: writeup.why,
+    where: writeup.where,
+    url: writeup.page,
+    shots: writeup.shots,
+    severity: writeup.severity,
+    related: writeup.related,
+    labels: writeup.labels,
+    fromChat: true,
+  });
+}
+
+function addFeedbackFiles(files) {
+  const next = [...state.feedbackShots];
+  for (const file of files) {
+    if (!file.type.startsWith("image/")) continue;
+    next.push({
+      id: `shot-${Date.now()}-${next.length}`,
+      url: URL.createObjectURL(file),
+      name: file.name || "Screenshot.png",
+      kind: "factory",
+    });
+  }
+  if (next.length === state.feedbackShots.length) return;
+  state.feedbackShots = next;
+  render();
+  const box = document.querySelector("[data-bind=feedbackDraft]");
+  if (box) box.focus();
+}
+
+function iconCpu() {
+  return `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M9 1v3M15 1v3M9 20v3M15 20v3M1 9h3M1 15h3M20 9h3M20 15h3"/></svg>`;
+}
+
+function iconPaperclip() {
+  return `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>`;
+}
+
+function iconSend() {
+  return `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M22 2L11 13"/><path d="M22 2L15 22 11 13 2 9 22 2z"/></svg>`;
+}
+
+function consultingOrb() {
+  return `
+    <span class="orb" aria-hidden="true">
+      <span class="orb-ring"></span>
+      <span class="orb-ring"></span>
+      <span class="orb-core"></span>
+      <span class="orb-shimmer"></span>
+      <span class="orb-scan"></span>
+    </span>`;
+}
+
+function renderWriteupCard(writeup) {
+  return `
+    <div class="fb-writeup">
+      <p class="fb-writeup-kicker">Feedback ticket</p>
+      <div class="fb-writeup-top">
+        ${kindChip(writeup.kind)}
+        ${writeup.severity ? sevChip(writeup.severity) : ""}
+        <span class="fb-page">${writeup.page}</span>
       </div>
-      <div class="studio-list">
-        <h2>Your reports</h2>
+      <strong>${writeup.title}</strong>
+      ${writeup.area || writeup.product ? `<p class="fb-meta">${[writeup.product, writeup.area].filter(Boolean).join(" · ")}</p>` : ""}
+      <p>${writeup.happened || writeup.want}</p>
+      ${writeup.expected ? `<p class="fb-expect"><span>Expected</span>${writeup.expected}</p>` : ""}
+      ${writeup.why ? `<p class="fb-expect">${writeup.why}</p>` : ""}
+      ${
+        writeup.related?.length
+          ? `<p class="fb-related">${writeup.related.map((key) => `<span class="key">${key}</span>`).join("")}</p>`
+          : ""
+      }
+      ${
+        writeup.labels?.length
+          ? `<p class="fb-labels">${writeup.labels.map((label) => `<span>${label}</span>`).join("")}</p>`
+          : ""
+      }
+      <button class="fb-send-this" data-act="submit-writeup">Send this</button>
+    </div>`;
+}
+
+function renderFeedbackMessage(msg, filed) {
+  const role = msg.role === "you" ? "you" : "agent";
+  return `
+    <div class="fb-msg fb-${role}">
+      <span class="fb-role">${role}</span>
+      <div class="fb-bubble">
+        <p>${msg.text}</p>
         ${
-          mine.length === 0
-            ? `<div class="empty">Nothing filed yet.</div>`
-            : mine
-                .map(
-                  (row) => `
-          <button class="mine-row" data-ticket="${row.key}">
-            <div>
-              <h3>${row.title}</h3>
-              <div class="sub">${KIND_LABEL[row.kind]} · ${reporterAge(row)}</div>
-            </div>
-            ${reporterStatusChip(row)}
-          </button>`,
-                )
-                .join("")
+          msg.previews?.length
+            ? `<div class="fb-previews">${msg.previews.map((url) => `<img src="${url}" alt="Pasted screenshot" />`).join("")}</div>`
+            : ""
         }
+        ${msg.writeup && !filed ? renderWriteupCard(msg.writeup) : ""}
       </div>
     </div>`;
 }
 
+function renderFeedbackThread() {
+  const filed = state.feedbackMessages.some((msg) => msg.text.startsWith("Sent."));
+  if (!state.feedbackMessages.length && !state.feedbackBusy) {
+    return `
+      <div class="fb-empty">
+        <p>Describe what's going on. The assistant will figure out whether this is a bug or a request before writing it up.</p>
+        <p class="fb-empty-label">Example</p>
+        <div class="fb-empty-examples">
+          <p>“Can you take a look? This PR assessment flagged the wrong file.”</p>
+          <p>“Factory keeps me in Review after the PR already merged.”</p>
+          <p>“Idea: skip the pipeline steps that already passed on the last run.”</p>
+          <p>“Search dropped my path filter the second time I queried.”</p>
+        </div>
+        <p>Paste a screenshot if you have one.</p>
+      </div>`;
+  }
+  return `
+    <div class="fb-thread">
+      ${state.feedbackMessages.map((msg) => renderFeedbackMessage(msg, filed)).join("")}
+      ${
+        state.feedbackThinking
+          ? `<div class="fb-think">${consultingOrb()}<span>${state.feedbackThinking}</span></div>`
+          : ""
+      }
+    </div>`;
+}
+
+function renderMineList() {
+  const mine = state.items.filter((item) => item.mine);
+  if (!mine.length) return `<div class="empty">Nothing filed yet.</div>`;
+  return mine
+    .map(
+      (row) => `
+      <button class="mine-row" data-ticket="${row.key}">
+        <div>
+          <h3>${row.title}</h3>
+          <div class="sub">${KIND_LABEL[row.kind]} · ${reporterAge(row)}</div>
+        </div>
+        ${reporterStatusChip(row)}
+      </button>`,
+    )
+    .join("");
+}
+
+function renderFeedbackDrawer() {
+  if (state.studioRole !== "you" || !state.feedbackOpen) return "";
+  const pending = state.feedbackMessages.some((msg) => msg.writeup) && !state.feedbackMessages.at(-1)?.text?.startsWith("Sent.");
+  return `
+    <div class="fb-back ${state.feedbackShown ? "is-in" : ""}" data-act="close-feedback"></div>
+    <aside class="fb-drawer ${state.feedbackShown ? "is-in" : ""}" data-stop>
+      <header class="fb-head">
+        <div>
+          <div class="fb-title">${iconCpu()} <span>${state.feedbackTab === "mine" ? "Your reports" : "Feedback"}</span></div>
+          <p class="fb-sub">${state.feedbackTab === "mine" ? "Filed from this account" : "From this page"}</p>
+        </div>
+        <div class="fb-head-right">
+          <button type="button" class="fb-head-link ${state.feedbackTab === "mine" ? "is-on" : ""}" data-fb="${state.feedbackTab === "mine" ? "chat" : "mine"}">${state.feedbackTab === "mine" ? "Chat" : "Your reports"}</button>
+          <button type="button" class="fb-close" data-act="close-feedback" aria-label="Close">×</button>
+        </div>
+      </header>
+      <div class="fb-body">
+        ${state.feedbackTab === "mine" ? renderMineList() : renderFeedbackThread()}
+      </div>
+      ${
+        state.feedbackTab === "chat"
+          ? `
+        <footer class="fb-composer">
+          <div class="fb-grab" aria-hidden="true"><span></span></div>
+          ${
+            state.feedbackShots.length
+              ? `<div class="fb-pending">${state.feedbackShots
+                  .map(
+                    (shot) => `
+                <span class="fb-chip">
+                  <img src="${shot.url}" alt="" />
+                  <button type="button" data-act="remove-shot" data-id="${shot.id}" aria-label="Remove screenshot">×</button>
+                </span>`,
+                  )
+                  .join("")}</div>`
+              : ""
+          }
+          <div class="fb-row">
+            <textarea data-bind="feedbackDraft" rows="2" placeholder="What's going on?" ${state.feedbackBusy ? "disabled" : ""}>${String(state.feedbackDraft).replaceAll("&", "&amp;").replaceAll("<", "&lt;")}</textarea>
+            <input id="fb-file" type="file" accept="image/png,image/jpeg,image/gif,image/webp" multiple hidden />
+            <button type="button" class="fb-icon" data-act="attach-feedback" aria-label="Attach files">${iconPaperclip()}</button>
+            <button type="button" class="fb-send" data-act="send-feedback" aria-label="Send" ${state.feedbackBusy ? "disabled" : ""}>${iconSend()}</button>
+          </div>
+          <p class="fb-hint">${
+            state.feedbackDemo === "running"
+              ? "Working through the page and the prompt…"
+              : pending
+                ? "Edit by sending another note, or send the draft."
+                : "Send the prefill to watch the demo, or type your own."
+          }</p>
+        </footer>`
+          : ""
+      }
+    </aside>`;
+}
+
+function renderStudioYou() {
+  return `
+    <div class="lore-shell">
+      <header class="lore-topbar">
+        <div class="lore-left">
+          <span class="lore-mark" aria-hidden="true">L</span>
+          <nav class="lore-nav">
+            <span>Knowledge</span>
+            <span>Reports</span>
+            <span>Actions</span>
+            <span>Community</span>
+          </nav>
+          <input class="lore-search" value="path:web/src feedback" readonly />
+        </div>
+        <div class="lore-right">
+          <button type="button" class="lore-icon" aria-label="Help">?</button>
+          <button type="button" class="lore-icon ${state.feedbackOpen ? "is-on" : ""}" data-act="open-feedback" aria-label="Send Feedback" title="Send Feedback">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H8l-4 4V5a2 2 0 0 1 2-2h13a2 2 0 0 1 2 2z"/><path d="M12 7v6"/><path d="M9 10h6"/></svg>
+          </button>
+          <button type="button" class="lore-icon" aria-label="Notifications">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10 21a2 2 0 0 0 4 0"/></svg>
+          </button>
+          <span class="lore-face">JH</span>
+        </div>
+      </header>
+      <main class="lore-page">
+        <p class="studio-kicker">Lore</p>
+        <h1>This is a Lore page</h1>
+        <p class="lede">From anywhere within Lore. Feedback is the button in the bar.</p>
+      </main>
+      ${sketchDock()}
+    </div>`;
+}
+
 function renderStudioDev() {
-  if (state.studioDevPage === "report") return renderStudioReport();
   const rows = filtered();
   const item = rows.find((row) => row.key === state.selectedKey) ?? rows[0];
   return `
     <div class="studio-work">
-      ${studioChrome("Developer")}
-      ${renderStudioMetrics()}
+      ${studioChrome("developer view")}
       <div class="studio-queue">
         <input class="case-search" data-bind="query" placeholder="Search CORP11 or text" value="${escapeAttr(state.query)}" />
         <div class="seg">
@@ -764,97 +1136,6 @@ function renderStudioCase(item) {
       <div class="field"><label>Reply on CORP11</label><textarea name="reply" placeholder="This writes a Jira comment."></textarea></div>
       ${actions(item, `<button class="btn btn-primary" data-act="reply" data-key="${item.key}">Send reply</button>`)}
     </article>`;
-}
-
-function renderStudioMetrics() {
-  return `
-    <section class="studio-metrics">
-      <div class="studio-metrics-head">
-        <p class="studio-metrics-kicker">This month</p>
-        <button type="button" class="studio-history-link" data-dev="report">History</button>
-      </div>
-      <div class="studio-metrics-grid">
-        ${metricTiles(studioMetrics())}
-      </div>
-    </section>`;
-}
-
-function renderStudioReport() {
-  const months = historyMonths();
-  const visible = monthsForPeriod(months);
-  const now = studioMetrics().slice(0, 2);
-  const maxFiled = Math.max(...months.map((row) => row.filed), 1);
-  return `
-    <div class="studio-report">
-      ${studioChrome("Developer")}
-      <div class="studio-report-body">
-        <div class="studio-report-title">
-          <div>
-            <h1>Feedback report</h1>
-            <p class="lede">The queue strip is this month. This page is every month we have, plus a window if you need one.</p>
-          </div>
-          <div class="studio-tone" role="group" aria-label="Report period">
-            <button type="button" data-period="month" class="${state.reportPeriod === "month" ? "is-on" : ""}">This month</button>
-            <button type="button" data-period="90d" class="${state.reportPeriod === "90d" ? "is-on" : ""}">90 days</button>
-            <button type="button" data-period="all" class="${state.reportPeriod === "all" ? "is-on" : ""}">All time</button>
-          </div>
-        </div>
-        <p class="studio-metrics-kicker">Right now</p>
-        <div class="studio-metrics-grid report-now">${metricTiles(now)}</div>
-        <p class="studio-metrics-kicker">${periodLabel()}</p>
-        <div class="studio-metrics-grid">${metricTiles(rollup(visible))}</div>
-        <p class="studio-metrics-kicker">By month</p>
-        <div class="report-legend">
-          <span><i class="swatch filed"></i> Filed</span>
-          <span><i class="swatch impl"></i> Implemented</span>
-        </div>
-        <div class="report-chart">
-          ${months
-            .map((row) => {
-              const filedH = Math.max(8, Math.round((row.filed / maxFiled) * 100));
-              const implH = Math.max(row.implemented ? 8 : 0, Math.round((row.implemented / maxFiled) * 100));
-              return `
-            <div class="report-col">
-              <div class="bars">
-                <div class="bar filed" style="height:${filedH}%"></div>
-                <div class="bar impl" style="height:${implH}%"></div>
-              </div>
-              <span>${row.label}</span>
-            </div>`;
-            })
-            .join("")}
-        </div>
-        <table class="studio-table report-table">
-          <thead>
-            <tr>
-              <th>Month</th>
-              <th>Filed</th>
-              <th>Implemented</th>
-              <th>Won't do</th>
-              <th>Work orders</th>
-              <th>Median claim</th>
-              <th>Median done</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${months
-              .map(
-                (row) => `
-              <tr class="${visible.some((v) => v.id === row.id) ? "is-on" : ""}">
-                <td>${row.label} 2026</td>
-                <td>${row.filed}</td>
-                <td>${row.implemented}</td>
-                <td>${row.rejected}</td>
-                <td>${row.workOrders}</td>
-                <td>${fmtHours(row.claimHours)}</td>
-                <td>${fmtHours(row.doneHours)}</td>
-              </tr>`,
-              )
-              .join("")}
-          </tbody>
-        </table>
-      </div>
-    </div>`;
 }
 
 function renderStudio() {
@@ -967,11 +1248,11 @@ function render() {
   app.dataset.variant = "studio";
   app.dataset.tone = state.studioTone;
   app.dataset.role = state.studioRole;
-  app.dataset.page = state.studioRole === "dev" ? state.studioDevPage : "you";
+  app.dataset.page = state.studioRole === "dev" ? "queue" : "you";
   app.innerHTML = renderStudio();
 
   const modal = $("#modal-root");
-  modal.innerHTML = `${renderCompose()}${renderResolve()}${renderStudioTicket()}${state.toast ? `<div class="toast">${state.toast}</div>` : ""}`;
+  modal.innerHTML = `${renderFeedbackDrawer()}${renderCompose()}${renderResolve()}${renderStudioTicket()}${state.toast ? `<div class="toast">${state.toast}</div>` : ""}`;
 }
 
 function readForm(modal) {
@@ -986,7 +1267,7 @@ document.addEventListener("click", (event) => {
   if (event.target.closest("[data-stop]") && event.target.closest(".modal") && !event.target.closest("[data-act]")) {
     return;
   }
-  const t = event.target.closest("[data-inbox], [data-kind], [data-select], [data-act], [data-tone], [data-role], [data-ticket], [data-dev], [data-period]");
+  const t = event.target.closest("[data-inbox], [data-kind], [data-select], [data-act], [data-tone], [data-role], [data-ticket], [data-fb]");
   if (!t) {
     if (event.target.matches(".modal-back")) return;
     return;
@@ -996,21 +1277,18 @@ document.addEventListener("click", (event) => {
     state.studioTicket = null;
     state.compose = null;
     state.resolve = null;
-    if (state.studioRole === "dev") state.inbox = "open";
+    if (state.studioRole === "dev") {
+      state.inbox = "open";
+      cancelFeedbackMotion();
+      state.feedbackOpen = false;
+      state.feedbackShown = false;
+      resetChat();
+    }
     render();
     return;
   }
-  if (t.dataset.dev) {
-    state.studioDevPage = t.dataset.dev;
-    state.studioRole = "dev";
-    state.studioTicket = null;
-    state.compose = null;
-    state.resolve = null;
-    render();
-    return;
-  }
-  if (t.dataset.period) {
-    state.reportPeriod = t.dataset.period;
+  if (t.dataset.fb) {
+    state.feedbackTab = t.dataset.fb;
     render();
     return;
   }
@@ -1045,6 +1323,35 @@ document.addEventListener("click", (event) => {
   const act = t.dataset.act;
   const key = t.dataset.key;
   const item = state.items.find((row) => row.key === key);
+  if (act === "open-feedback") {
+    if (state.feedbackOpen) closeFeedback();
+    else openFeedback();
+    return;
+  }
+  if (act === "close-feedback") {
+    closeFeedback();
+    return;
+  }
+  if (act === "send-feedback") {
+    sendFeedbackChat();
+    return;
+  }
+  if (act === "submit-writeup") {
+    const writeup = [...state.feedbackMessages].reverse().find((msg) => msg.writeup)?.writeup;
+    submitWriteup(writeup);
+    return;
+  }
+  if (act === "attach-feedback") {
+    document.querySelector("#fb-file")?.click();
+    return;
+  }
+  if (act === "remove-shot") {
+    const doomed = state.feedbackShots.find((shot) => shot.id === t.dataset.id);
+    if (doomed?.url) URL.revokeObjectURL(doomed.url);
+    state.feedbackShots = state.feedbackShots.filter((shot) => shot.id !== t.dataset.id);
+    render();
+    return;
+  }
   if (act === "compose") {
     state.compose = { step: "pick" };
     state.studioTicket = null;
@@ -1111,13 +1418,43 @@ document.addEventListener("input", (event) => {
       next.setSelectionRange(pos, pos);
     }
   }
+  if (event.target.dataset.bind === "feedbackDraft") {
+    state.feedbackDraft = event.target.value;
+  }
+});
+
+document.addEventListener("change", (event) => {
+  if (event.target.id === "fb-file") {
+    addFeedbackFiles(event.target.files || []);
+    event.target.value = "";
+  }
+});
+
+document.addEventListener("paste", (event) => {
+  if (!state.feedbackOpen || state.studioRole !== "you") return;
+  const files = [...(event.clipboardData?.files || [])].filter((file) => file.type.startsWith("image/"));
+  if (!files.length) return;
+  event.preventDefault();
+  addFeedbackFiles(files);
 });
 
 document.addEventListener("keydown", (event) => {
+  if (event.target.dataset.bind === "feedbackDraft" && event.key === "Enter" && !event.shiftKey) {
+    event.preventDefault();
+    sendFeedbackChat();
+    return;
+  }
   if (event.target.matches("input, textarea, select")) return;
   if (event.key === "n" || event.key === "N") {
-    state.compose = { step: "pick" };
-    state.studioTicket = null;
+    if (state.studioRole === "you") {
+      if (state.feedbackOpen) closeFeedback();
+      else openFeedback();
+    } else {
+      state.compose = { step: "pick" };
+      state.studioTicket = null;
+      render();
+    }
+    return;
   }
   if (event.key === "y" || event.key === "Y") {
     state.studioRole = "you";
@@ -1129,28 +1466,27 @@ document.addEventListener("keydown", (event) => {
     state.studioTicket = null;
     state.compose = null;
     state.inbox = "open";
-  }
-  if (state.studioRole === "dev" && (event.key === "r" || event.key === "R")) {
-    state.studioDevPage = "report";
-  }
-  if (state.studioRole === "dev" && (event.key === "q" || event.key === "Q")) {
-    state.studioDevPage = "queue";
+    cancelFeedbackMotion();
+    state.feedbackOpen = false;
+    state.feedbackShown = false;
+    resetChat();
   }
   if (event.key === "Escape") {
     state.compose = null;
     state.resolve = null;
     state.studioTicket = null;
+    closeFeedback();
+    return;
   }
   render();
 });
 
 
 const params = new URLSearchParams(location.search);
-if (params.get("role") === "dev" || params.get("page") === "report") state.studioRole = "dev";
-if (params.get("page") === "report") state.studioDevPage = "report";
-if (params.get("page") === "queue") {
-  state.studioRole = "dev";
-  state.studioDevPage = "queue";
+if (params.get("role") === "dev" || params.get("page") === "queue") state.studioRole = "dev";
+if (params.get("chat") === "1") {
+  state.feedbackOpen = true;
+  state.feedbackShown = true;
 }
 
 render();

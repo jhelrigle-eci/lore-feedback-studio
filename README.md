@@ -6,8 +6,8 @@ Throwaway HTML for the in-app feedback redesign. Not production. CORP11 stays th
 
 ## Links for review
 
-- [User view](https://jhelrigle-eci.github.io/lore-feedback-studio/) — compose and check your own reports
+- [User view](https://jhelrigle-eci.github.io/lore-feedback-studio/) — Lore page, header chat, Your reports
+- [Open the chat](https://jhelrigle-eci.github.io/lore-feedback-studio/?chat=1) — prefilled report; Send runs the scripted agent demo
 - [Developer queue](https://jhelrigle-eci.github.io/lore-feedback-studio/?page=queue) — work a ticket
-- [Feedback report](https://jhelrigle-eci.github.io/lore-feedback-studio/?page=report) — this month plus all-time history
 
-User / Developer switches role. On the developer view, Queue / Report switches page.
+User / Developer and Light / Dark are in the bottom-left dock. Closing the chat clears the demo.
