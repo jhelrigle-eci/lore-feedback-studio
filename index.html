@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Lore feedback prototypes</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Instrument+Serif:ital@0;1&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css?v=share1" />
+</head>
+<body>
+  <header class="switcher" id="switcher">
+    <div class="switcher-brand">
+      <span class="switcher-mark">Lore</span>
+      <span class="switcher-title">Feedback prototypes</span>
+      <span class="switcher-note">Throwaway. Keys 1–4 switch variants. On C, Y/D is You/Developer. On the developer view, Q is Queue and R is Report.</span>
+    </div>
+    <nav class="switcher-tabs" aria-label="Prototype variants">
+      <button type="button" data-variant="case" class="is-on">A Case file</button>
+      <button type="button" data-variant="board">B Board</button>
+      <button type="button" data-variant="studio">C Studio</button>
+      <button type="button" data-variant="today">D Today</button>
+    </nav>
+  </header>
+  <main id="app"></main>
+  <div id="modal-root"></div>
+  <script src="app.js?v=share1"></script>
+</body>
+</html>
